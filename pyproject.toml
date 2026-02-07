@@ -1,0 +1,14 @@
+[project]
+name = "youtube-lyrics-ai"
+version = "0.1.0"
+description = "Generate gospel song lyrics using youtube api and strands sdk"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pydub>=0.25.1",
+    "pytubefix>=10.1.1",
+    "strands-agents[gemini]>=1.25.0",
+    "strands-agents-tools>=0.2.20",
+    "python-dotenv>=1.2.1",
+    "audioop-lts>=0.2.2",
+]
