@@ -4,15 +4,13 @@ https://www.geeksforgeeks.org/download-video-in-mp3-format-using-pytube/
 '''
 from strands import tool
 import os
-import base64
 from pydub import AudioSegment
-from pathlib import Path
 from pytubefix import YouTube
 from pytubefix.cli import on_progress
 from typing import Optional
 
 @tool
-def get_youtube_audio_as_mp3(link: str) -> Optional[str]:
+def get_youtube_audio_as_mp3(link: str, file_name: str) -> Optional[str]:
     """download youtube video as mp3 file"""
     # print(f"Downloading youtube URL: {link}...")
     youtubeObject = YouTube(link, on_progress_callback=on_progress, use_oauth=True, allow_oauth_cache=True)
@@ -25,8 +23,7 @@ def get_youtube_audio_as_mp3(link: str) -> Optional[str]:
         audio_file = video.download(output_path="./download")
         if audio_file is None:
             raise ValueError("no data when trying to download video")
-        base, _ = os.path.splitext(audio_file)
-        mp3_file = base + '.mp3'
+        mp3_file = './download/' + file_name + '.mp3'
         os.rename(audio_file, mp3_file)
         print(f"Audio downloaded: {video.title}")
         return mp3_file
@@ -39,32 +36,6 @@ def get_youtube_audio_as_mp3(link: str) -> Optional[str]:
 # Audio Processing Tools
 # ==============================================================================
 
-@tool
-def convert_mp3_to_wav(mp3_file_path: str) -> str:
-    """
-    Convert an MP3 file to WAV format for better compatibility.
-    
-    Args:
-        mp3_file_path: Path to the MP3 file to convert
-        
-    Returns:
-        Path to the converted WAV file
-    """
-    try:
-        mp3_path = Path(mp3_file_path)
-        if not mp3_path.exists():
-            return f"Error: File {mp3_file_path} not found"
-        
-        # Load MP3 file
-        audio = AudioSegment.from_mp3(mp3_file_path)
-        
-        # Convert to WAV
-        wav_path = mp3_path.with_suffix('.wav')
-        audio.export(wav_path, format='wav')
-        
-        return str(wav_path)
-    except Exception as e:
-        return f"Error converting MP3 to WAV: {str(e)}"
 
 
 @tool
@@ -96,56 +67,6 @@ Audio File Information:
         return info
     except Exception as e:
         return f"Error reading audio file: {str(e)}"
-
-
-@tool
-def encode_audio_to_base64(audio_file_path: str) -> str:
-    """
-    Encode audio file to base64 string for API transmission.
-    
-    Args:
-        audio_file_path: Path to the audio file
-        
-    Returns:
-        Base64 encoded string of the audio file
-    """
-    try:
-        with open(audio_file_path, 'rb') as audio_file:
-            audio_data = audio_file.read()
-            encoded = base64.b64encode(audio_data).decode('utf-8')
-            return encoded
-    except Exception as e:
-        return f"Error encoding audio: {str(e)}"
-
-
-@tool
-def split_audio_into_chunks(audio_file_path: str, chunk_duration_ms: int = 60000) -> str:
-    """
-    Split audio file into smaller chunks for processing.
-    
-    Args:
-        audio_file_path: Path to the audio file
-        chunk_duration_ms: Duration of each chunk in milliseconds (default: 60000ms = 1 minute)
-        
-    Returns:
-        List of paths to the audio chunks as a string
-    """
-    try:
-        audio = AudioSegment.from_file(audio_file_path)
-        audio_path = Path(audio_file_path)
-        
-        chunks = []
-        for i, start_ms in enumerate(range(0, len(audio), chunk_duration_ms)):
-            end_ms = min(start_ms + chunk_duration_ms, len(audio))
-            chunk = audio[start_ms:end_ms]
-            
-            chunk_path = audio_path.parent / f"{audio_path.stem}_chunk_{i+1}{audio_path.suffix}"
-            chunk.export(chunk_path, format=audio_path.suffix[1:])
-            chunks.append(str(chunk_path))
-        
-        return f"Created {len(chunks)} chunks: " + ", ".join(chunks)
-    except Exception as e:
-        return f"Error splitting audio: {str(e)}"
 
 
 # ==============================================================================

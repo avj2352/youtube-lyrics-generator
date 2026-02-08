@@ -1,135 +1,168 @@
+# main.py
 """
-Strands Agents SDK Example: Transcribe Lyrics from MP3 using Gemini AI
-
-This example demonstrates how to use the Strands Agents SDK with Google's Gemini AI
-to transcribe and analyze lyrics from an MP3 audio file.
-
-Requirements:
-    pip install strands-agents google-genai pydub
-    
-You'll also need ffmpeg installed:
-    - Mac: brew install ffmpeg
-    - Ubuntu: sudo apt-get install ffmpeg
-    - Windows: Download from ffmpeg.org
+YouTube Lyrics Transcription with Whisper + Claude Analysis
 """
 
-import os
-import base64
-from pathlib import Path
-from strands import Agent, tool
-# from strands.models.gemini import GeminiModel
+from strands import Agent
 from strands.models.bedrock import BedrockModel
-from typing import Optional
-from pydub import AudioSegment
+import openai
+from pathlib import Path
 # ..custom
 from util.tools import (
     get_youtube_audio_as_mp3,
-    convert_mp3_to_wav,
     get_audio_info,
-    encode_audio_to_base64,
-    split_audio_into_chunks,
     format_lyrics,
     analyze_lyrics_structure
 )
-from util.env_config import GEMINI_API_KEY
+from util.env_config import OPENAI_API_KEY
 
-# ==============================================================================
-# Main Application
-# ==============================================================================
+def transcribe_audio_with_whisper(audio_file_path: str) -> str:
+    """
+    Transcribe audio using OpenAI Whisper
+    
+    Whisper processes the entire audio file in one call.
+    Returns '♪♪♪' for sections with only music/no vocals.
+    """
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    
+    print(f"Transcribing audio with Whisper: {audio_file_path}")
+    
+    # Check file size (Whisper has 25MB limit)
+    file_size_mb = Path(audio_file_path).stat().st_size / (1024 * 1024)
+    print(f"Audio file size: {file_size_mb:.2f} MB")
+    
+    if file_size_mb > 25:
+        print("⚠️ Warning: File exceeds 25MB limit. Consider compressing the audio.")
+        return "Error: File too large for Whisper API (max 25MB)"
+    
+    with open(audio_file_path, "rb") as audio_file:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="verbose_json",  # Get more details including timestamps
+            language="en",  # Specify language for better accuracy (remove if not English)
+            prompt="This is a song with vocals and music. Transcribe only the sung lyrics."  # Help guide the model
+        )
+        
+        # Extract the text from verbose response
+        transcribed_text = transcript.text
+        
+        print(f"\n(openai) -> Transcription Info:")
+        print(f"  - Language detected: {transcript.language}")
+        print(f"  - Duration: {transcript.duration}s")
+        print(f"  - Text length: {len(transcribed_text)} characters")
+        
+        # Check if we got mostly music symbols
+        if transcribed_text.count('♪') > len(transcribed_text) * 0.5:
+            print("⚠️ Warning: Mostly instrumental audio detected. Limited vocals found.")
+        
+        return transcribed_text
 
-def transcribe_mp3_lyrics(mp3_file_path: str, gemini_api_key: Optional[str] = None):
-    """
-    Main function to transcribe lyrics from an MP3 file using Gemini AI.
+
+def analyze_lyrics_with_claude(transcribed_text: str, audio_file_path: str):
+    """Analyze transcribed lyrics with Claude"""
     
-    Args:
-        mp3_file_path: Path to the MP3 file containing the song
-        gemini_api_key: Google Gemini API key (can also be set as GEMINI_API_KEY env var)
-    """
+    bedrock_opus_model = BedrockModel(model_id="us.anthropic.claude-opus-4-6-v1")
     
-    # Get API key from environment if not provided
-    if not gemini_api_key:
-        gemini_api_key: Optional[str] = os.environ.get('GEMINI_API_KEY') or None
-    
-    if not gemini_api_key:
-        print("Error: Please provide GEMINI_API_KEY either as parameter or environment variable")
-        return
-    
-    # Configure Gemini model with audio processing capabilities
-    gemini_model = BedrockModel(model_id="us.anthropic.claude-opus-4-6-v1")    
-    # Create agent with audio processing and lyrics analysis tools
     agent = Agent(
-        model=gemini_model,
+        model=bedrock_opus_model,
         tools=[
-            get_youtube_audio_as_mp3,
-            convert_mp3_to_wav,
-            get_audio_info,
-            encode_audio_to_base64,
-            split_audio_into_chunks,
             format_lyrics,
             analyze_lyrics_structure
         ],
         description="""
-You are an expert audio transcription and lyrics analysis assistant. 
-Your role is to help transcribe lyrics from audio files and provide detailed analysis.
+You are an expert lyrics analysis assistant.
+Your role is to analyze transcribed lyrics and provide detailed insights.
 
-When given an audio file:
-1. First, get information about the audio file
-2. If needed, convert MP3 to WAV format for better compatibility
-3. For long files, consider splitting into chunks
-4. Transcribe the lyrics accurately, capturing every word
-5. Format the lyrics properly with line breaks
-6. Analyze the song structure and provide insights
+When given transcribed lyrics:
+1. Format the lyrics properly with line breaks
+2. Identify the song structure (verses, chorus, bridge, etc.)
+3. Analyze patterns, themes, and meaning
+4. Provide insights about the song's message
 
-Always be thorough and accurate in transcription.
+If the transcription contains mostly music symbols (♪), note that the audio
+was primarily instrumental with limited vocals.
+
+Always be thorough and accurate in your analysis.
 """
     )
     
-    print("=" * 80)
-    print("🎵 MP3 Lyrics Transcription with Gemini AI & Strands Agents")
-    print("=" * 80)
-    print(f"\nProcessing: {mp3_file_path}\n")
-    
-    # Create the transcription prompt
     prompt = f"""
-Please transcribe the lyrics from the audio file: {mp3_file_path}
+Here are the transcribed lyrics from the audio file: {audio_file_path}
 
-Follow these steps:
-1. Get information about the audio file
-2. Transcribe all the lyrics you can hear from the audio
-3. Format the lyrics with proper line breaks
-4. Analyze the song structure
+LYRICS:
+{transcribed_text}
 
-Provide:
-- Complete transcribed lyrics
-- Song structure analysis (verses, chorus, etc.)
-- Any notable patterns or themes in the lyrics
+Please:
+1. Format these lyrics with proper line breaks and structure
+2. Analyze the song structure (identify verses, chorus, bridge, etc.)
+3. Identify any notable patterns, themes, or wordplay
+4. Provide insights about the song's message and meaning
+5. If mostly instrumental (♪ symbols), note the limited vocal content
 """
     
-    # Run the agent
-    print("Agent is processing the audio file...")
-    print("-" * 80)
-    
     response = agent(prompt)
-    
-    print("\n" + "=" * 80)
-    print("TRANSCRIPTION RESULTS:")
-    print("=" * 80)
-    print(response)
-    print("\n" + "=" * 80)
-    
     return response
 
 
-# MAIN Application
+def transcribe_mp3_lyrics(mp3_file_path: str):
+    """Main function to transcribe and analyze lyrics"""
+    
+    print("=" * 80)
+    print("🎵 MP3 Lyrics Transcription & Analysis")
+    print("=" * 80)
+    print(f"\nProcessing: {mp3_file_path}\n")
+    
+    # Step 1: Get audio info
+    print("📊 Getting audio information...")
+    audio_info = get_audio_info(mp3_file_path)
+    print(f"Audio info: {audio_info}\n")
+    
+    # Step 2: Transcribe with Whisper
+    print("🎤 Transcribing audio with OpenAI Whisper...")
+    print("   (Whisper processes the entire audio file in one API call)")
+    transcribed_text = transcribe_audio_with_whisper(mp3_file_path)
+    print(f"\n✅ Transcription complete! ({len(transcribed_text)} characters)\n")
+    
+    # Step 3: Analyze with Claude
+    print("🧠 Analyzing lyrics with Claude...")
+    analysis = analyze_lyrics_with_claude(transcribed_text, mp3_file_path)
+    
+    print("\n" + "=" * 80)
+    print("TRANSCRIPTION & ANALYSIS RESULTS:")
+    print("=" * 80)
+    print("\n📝 RAW TRANSCRIPTION:")
+    print("-" * 80)
+    print(transcribed_text)
+    print("\n" + "-" * 80)
+    print("\n🎵 ANALYSIS:")
+    print("-" * 80)
+    print(analysis)
+    print("\n" + "=" * 80)
+    
+    return {
+        "transcription": transcribed_text,
+        "analysis": analysis
+    }
+
 
 if __name__ == "__main__":
-    # transcribe youtube audio file
-    link = input("Enter youtube video url: ")
-    link = link.strip()
-    print("Downloading youtube mp3...")
-    mp3_file = get_youtube_audio_as_mp3(link=link)
+    # Download YouTube audio
+    link = input("Enter youtube video url: ").strip()
+    filename = input("Enter the filename: ").strip()
+    
+    if not link or not filename:
+        print("Error: URL and filename required")
+        exit(1)
+    
+    print(f"\n📥 Downloading from: {link}")
+    mp3_file = get_youtube_audio_as_mp3(link=link, file_name=filename)
+    
     if not mp3_file:
-        print("No MP3 file created")
-        exit()
-    print(f"MP3 file location: {mp3_file}")
-    transcribe_mp3_lyrics(mp3_file_path=mp3_file, gemini_api_key=GEMINI_API_KEY)
+        print("❌ Download failed")
+        exit(1)
+    
+    print(f"✅ Downloaded to: {mp3_file}\n")
+    
+    # Transcribe and analyze
+    results = transcribe_mp3_lyrics(mp3_file_path=mp3_file)
