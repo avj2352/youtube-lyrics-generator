@@ -14,6 +14,9 @@ This project automatically downloads audio from YouTube videos, transcribes lyri
 - [PyTubeFix](https://github.com/JuanBindez/pytubefix) - YouTube audio download
 - [Pydub](https://github.com/jiaaro/pydub) - Audio processing
 
+## Architecture
+
+![High level architecture](./design/youtube_lyrics_gen_workflow.png)
 
 ## Features
 
