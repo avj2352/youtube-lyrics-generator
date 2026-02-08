@@ -18,6 +18,20 @@ This project automatically downloads audio from YouTube videos, transcribes lyri
 
 ![High level architecture](./design/youtube_lyrics_gen_workflow.png)
 
+## Pre-requisites
+
+You need the following env variables, you can save them as `.env` files in your project
+
+```bash
+# aws bedrock access
+AWS_REGION="<bedrock-region>"
+AWS_ACCESS_KEY_ID="<aws-session-key-id>"
+AWS_SECRET_ACCESS_KEY="<aws-session-access-key>"
+AWS_PROFILE="<login-profile-check-credentials-or-enter-default>"
+# open ai api access
+OPENAI_API_KEY="<openai-api-key>"
+```
+
 ## Features
 
 - ✅ **YouTube Audio Download** - Automatically download audio from any YouTube video using PyTubeFix
