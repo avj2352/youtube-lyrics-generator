@@ -147,22 +147,63 @@ def transcribe_mp3_lyrics(mp3_file_path: str):
 
 
 if __name__ == "__main__":
-    # Download YouTube audio
-    link = input("Enter youtube video url: ").strip()
-    filename = input("Enter the filename: ").strip()
+    print("=" * 80)
+    print("🎵 YouTube Lyrics AI - Transcription & Analysis")
+    print("=" * 80)
+    print("\nChoose your input option:")
+    print("  1. I have an MP3 file")
+    print("  2. I have a YouTube link")
+    print("-" * 80)
     
-    if not link or not filename:
-        print("Error: URL and filename required")
+    option = input("Enter your choice (1 or 2): ").strip()
+    
+    mp3_file = None
+    
+    if option == "1":
+        # Option 1: User has existing MP3 file
+        print("\n📁 MP3 File Mode")
+        print("-" * 80)
+        mp3_file_path = input("Enter the path to your MP3 file: ").strip()
+        
+        if not mp3_file_path:
+            print("❌ Error: MP3 file path is required")
+            exit(1)
+        
+        # Check if file exists
+        if not Path(mp3_file_path).exists():
+            print(f"❌ Error: File not found: {mp3_file_path}")
+            exit(1)
+        
+        # Check if it's an MP3 file
+        if not mp3_file_path.lower().endswith('.mp3'):
+            print("⚠️ Warning: File doesn't have .mp3 extension, but will proceed anyway...")
+        
+        mp3_file = mp3_file_path
+        print(f"✅ Using existing file: {mp3_file}\n")
+        
+    elif option == "2":
+        # Option 2: Download from YouTube link (original flow)
+        print("\n📺 YouTube Download Mode")
+        print("-" * 80)
+        link = input("Enter YouTube video URL: ").strip()
+        filename = input("Enter the filename: ").strip()
+        
+        if not link or not filename:
+            print("❌ Error: URL and filename are required")
+            exit(1)
+        
+        print(f"\n📥 Downloading from: {link}")
+        mp3_file = get_youtube_audio_as_mp3(link=link, file_name=filename)
+        
+        if not mp3_file:
+            print("❌ Download failed")
+            exit(1)
+        
+        print(f"✅ Downloaded to: {mp3_file}\n")
+        
+    else:
+        print("❌ Error: Invalid option. Please enter 1 or 2")
         exit(1)
-    
-    print(f"\n📥 Downloading from: {link}")
-    mp3_file = get_youtube_audio_as_mp3(link=link, file_name=filename)
-    
-    if not mp3_file:
-        print("❌ Download failed")
-        exit(1)
-    
-    print(f"✅ Downloaded to: {mp3_file}\n")
     
     # Transcribe and analyze
     results = transcribe_mp3_lyrics(mp3_file_path=mp3_file)
