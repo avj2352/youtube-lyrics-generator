@@ -18,6 +18,11 @@ This project automatically downloads audio from YouTube videos, transcribes lyri
 
 ![High level architecture](./design/youtube_lyrics_gen_workflow.png)
 
+
+## Demo
+
+![AI Lyrics Generation](./design/claude_app.gif)
+
 ## Pre-requisites
 
 You need the following env variables, you can save them as `.env` files in your project
