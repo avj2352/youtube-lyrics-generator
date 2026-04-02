@@ -121,6 +121,52 @@ def format_text(raw_text: str) -> str:
 
 
 @tool
+def parse_technical_content(raw_text: str) -> str:
+    """
+    Clean and structure transcribed text from a technical video (tutorials,
+    demos, conference talks, coding walkthroughs, etc.) ready for deep analysis.
+
+    Removes filler words, normalises whitespace, and segments the text into
+    logical blocks separated by topic transitions so that downstream analysis
+    can work on well-defined chunks.
+
+    Args:
+        raw_text: Raw transcribed text from a technical video
+
+    Returns:
+        Cleaned, segmented text suitable for technical analysis
+    """
+    import re
+
+    # Normalise whitespace
+    text = re.sub(r' +', ' ', raw_text).strip()
+
+    # Remove common filler words/phrases
+    fillers = [
+        r"\bum+\b", r"\buh+\b", r"\blike\b(?=\s)", r"\byou know\b",
+        r"\bso basically\b", r"\bright\?\s*", r"\bokay so\b",
+    ]
+    for filler in fillers:
+        text = re.sub(filler, '', text, flags=re.IGNORECASE)
+
+    # Collapse multiple spaces/punctuation produced by filler removal
+    text = re.sub(r' {2,}', ' ', text).strip()
+
+    # Split on sentence boundaries and group into ~4-sentence blocks
+    sentence_endings = re.compile(r'(?<=[.!?])\s+')
+    sentences = [s.strip() for s in sentence_endings.split(text) if s.strip()]
+
+    blocks = []
+    group_size = 4
+    for i in range(0, len(sentences), group_size):
+        block = ' '.join(sentences[i:i + group_size])
+        if block:
+            blocks.append(block)
+
+    return '\n\n'.join(blocks)
+
+
+@tool
 def analyze_lyrics_structure(lyrics: str) -> str:
     """
     Analyze the structure of song lyrics (verses, chorus, bridge, etc.).

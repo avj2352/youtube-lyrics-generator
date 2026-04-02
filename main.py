@@ -13,7 +13,8 @@ from util.tools import (
     get_audio_info,
     format_lyrics,
     analyze_lyrics_structure,
-    format_text
+    format_text,
+    parse_technical_content,
 )
 from util.env_config import OPENAI_API_KEY
 
@@ -124,7 +125,7 @@ def transcribe_audio_with_whisper(audio_file_path: str) -> str:
 
 
 def analyze_with_claude(transcribed_text: str, audio_file_path: str):
-    """Analyze transcribed audio with Claude — handles both songs and spoken content."""
+    """Analyze transcribed audio with Claude — handles songs, technical, and general spoken content."""
 
     bedrock_opus_model = BedrockModel(model_id="us.anthropic.claude-opus-4-6-v1")
 
@@ -133,28 +134,48 @@ def analyze_with_claude(transcribed_text: str, audio_file_path: str):
         tools=[
             format_lyrics,
             analyze_lyrics_structure,
+            parse_technical_content,
             format_text,
         ],
         description="""
-You are an expert audio transcription analyst.
+You are an expert audio transcription analyst. You handle three types of video content.
 
-**Step 1 — Classify the content.**
-Read the transcribed text carefully and decide whether it is:
-  - A SONG: contains sung lyrics, repeating lines, verses/chorus patterns, or music symbols (♪).
-  - SPOKEN: a speech, interview, podcast, lecture, or other plain spoken-word content.
+**Step 1 — Classify the content into exactly one category.**
 
-**Step 2 — Process accordingly.**
-- If SONG:
-    1. Call `format_lyrics` to format the lyrics with proper line breaks.
-    2. Call `analyze_lyrics_structure` to identify verses, chorus, bridge, etc.
-    3. Share insights about patterns, themes, and the song's meaning.
-    4. If mostly instrumental (♪ symbols), note the limited vocal content.
-- If SPOKEN:
-    1. Call `format_text` to clean up and paragraph the spoken text.
-    2. Summarise the key points, topics, and overall message of the content.
+- SONG: contains sung lyrics, repeating lines, verse/chorus patterns, or music symbols (♪).
+- TECHNICAL: a tutorial, coding demo, conference talk, product walkthrough, or any video
+  where the primary subject is a technology, tool, framework, programming language, or
+  software/hardware product. Clues include: code snippets mentioned, CLI commands, API names,
+  version numbers, product names, technical jargon, step-by-step instructions.
+- GENERAL: everything else — speeches, interviews, podcasts, vlogs, news, documentaries,
+  lectures on non-technical topics.
 
-Always state your classification decision before using any tool.
-"""
+Always state your classification and a one-sentence reason before calling any tool.
+
+---
+
+**Step 2 — Process according to category.**
+
+SONG:
+  1. Call `format_lyrics` → formatted lyrics.
+  2. Call `analyze_lyrics_structure` → verse/chorus/bridge breakdown.
+  3. Provide: themes, notable wordplay, and the song's overall message.
+
+TECHNICAL:
+  1. Call `parse_technical_content` → cleaned, segmented transcript.
+  2. Using the cleaned text, produce a structured technical overview:
+     - **Technology / Product**: name and version (if mentioned).
+     - **Overview**: 2-3 sentence summary of what the video covers.
+     - **Features & Capabilities**: bulleted list of every distinct feature,
+       concept, or capability introduced.
+     - **Feature Details**: for each feature bullet, a short paragraph explaining
+       what was demonstrated or explained in the video.
+     - **Key Takeaways**: 3-5 actionable insights a viewer should walk away with.
+
+GENERAL:
+  1. Call `format_text` → clean, paragraphed text.
+  2. Provide: a summary of key points, topics covered, and the overall message.
+""",
     )
 
     prompt = f"""
@@ -163,9 +184,17 @@ Transcribed audio from: {audio_file_path}
 TRANSCRIPTION:
 {transcribed_text}
 
-Follow the two-step process described in your instructions:
-1. Classify whether this is a SONG or SPOKEN content.
-2. Use the appropriate tool(s) and provide a thorough analysis.
+Follow the two-step process in your instructions:
+1. Classify the content (SONG / TECHNICAL / GENERAL) and state your reason.
+2. Call the appropriate tool(s) and deliver a thorough analysis.
+
+Structure your final response with these two clearly labeled sections:
+
+FORMATTED TRANSCRIPT:
+<paste the full output returned by the formatting tool here>
+
+ANALYSIS:
+<your full analysis here>
 """
 
     response = agent(prompt)
@@ -199,21 +228,40 @@ def transcribe_mp3_lyrics(mp3_file_path: str):
     print("🧠 Analyzing audio content with Claude...")
     analysis = analyze_with_claude(transcribed_text, mp3_file_path)
     
+    # Split agent response into formatted transcript and analysis sections
+    analysis_str = str(analysis)
+    formatted_transcript = ""
+    analysis_body = analysis_str
+
+    if "FORMATTED TRANSCRIPT:" in analysis_str and "ANALYSIS:" in analysis_str:
+        parts = analysis_str.split("ANALYSIS:", 1)
+        formatted_transcript = parts[0].replace("FORMATTED TRANSCRIPT:", "").strip()
+        analysis_body = parts[1].strip()
+
     print("\n" + "=" * 80)
     print("TRANSCRIPTION & ANALYSIS RESULTS:")
     print("=" * 80)
+
     print("\n📝 RAW TRANSCRIPTION:")
     print("-" * 80)
     print(transcribed_text)
+
+    if formatted_transcript:
+        print("\n" + "-" * 80)
+        print("\n📄 FORMATTED TRANSCRIPT:")
+        print("-" * 80)
+        print(formatted_transcript)
+
     print("\n" + "-" * 80)
     print("\n🔍 ANALYSIS:")
     print("-" * 80)
-    print(analysis)
+    print(analysis_body if formatted_transcript else analysis_str)
     print("\n" + "=" * 80)
-    
+
     return {
         "transcription": transcribed_text,
-        "analysis": analysis
+        "formatted_transcript": formatted_transcript,
+        "analysis": analysis_body if formatted_transcript else analysis_str,
     }
 
 
