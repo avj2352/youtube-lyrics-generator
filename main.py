@@ -12,95 +12,162 @@ from util.tools import (
     get_youtube_audio_as_mp3,
     get_audio_info,
     format_lyrics,
-    analyze_lyrics_structure
+    analyze_lyrics_structure,
+    format_text
 )
 from util.env_config import OPENAI_API_KEY
 
+def _compress_audio_for_whisper(audio_file_path: str) -> str:
+    """
+    Compress audio to fit within Whisper's 25MB limit.
+    Returns path to the compressed file.
+    """
+    from pydub import AudioSegment
+    import tempfile
+
+    print("  Compressing audio to meet Whisper's 25MB limit...")
+    audio = AudioSegment.from_file(audio_file_path)
+    # Convert to mono and lower bitrate to reduce size
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    compressed_path = tempfile.mktemp(suffix=".mp3")
+    audio.export(compressed_path, format="mp3", bitrate="64k")
+    compressed_size_mb = Path(compressed_path).stat().st_size / (1024 * 1024)
+    print(f"  Compressed to {compressed_size_mb:.2f} MB")
+    return compressed_path
+
+
 def transcribe_audio_with_whisper(audio_file_path: str) -> str:
     """
-    Transcribe audio using OpenAI Whisper
-    
+    Transcribe audio using OpenAI Whisper.
+
     Whisper processes the entire audio file in one call.
     Returns '♪♪♪' for sections with only music/no vocals.
+    Retries up to 3 times on transient errors with exponential backoff.
     """
+    import time
+
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    
+
     print(f"Transcribing audio with Whisper: {audio_file_path}")
-    
+
     # Check file size (Whisper has 25MB limit)
     file_size_mb = Path(audio_file_path).stat().st_size / (1024 * 1024)
     print(f"Audio file size: {file_size_mb:.2f} MB")
-    
+
+    file_to_transcribe = audio_file_path
+    compressed_file = None
+
     if file_size_mb > 25:
-        print("⚠️ Warning: File exceeds 25MB limit. Consider compressing the audio.")
-        return "Error: File too large for Whisper API (max 25MB)"
-    
-    with open(audio_file_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            response_format="verbose_json",  # Get more details including timestamps
-            language="en",  # Specify language for better accuracy (remove if not English)
-            prompt="This is a song with vocals and music. Transcribe only the sung lyrics."  # Help guide the model
-        )
-        
-        # Extract the text from verbose response
-        transcribed_text = transcript.text
-        
-        print(f"\n(openai) -> Transcription Info:")
-        print(f"  - Language detected: {transcript.language}")
-        print(f"  - Duration: {transcript.duration}s")
-        print(f"  - Text length: {len(transcribed_text)} characters")
-        
-        # Check if we got mostly music symbols
-        if transcribed_text.count('♪') > len(transcribed_text) * 0.5:
-            print("⚠️ Warning: Mostly instrumental audio detected. Limited vocals found.")
-        
-        return transcribed_text
+        print("⚠️ File exceeds 25MB limit. Attempting compression...")
+        compressed_file = _compress_audio_for_whisper(audio_file_path)
+        compressed_size_mb = Path(compressed_file).stat().st_size / (1024 * 1024)
+        if compressed_size_mb > 25:
+            raise ValueError(
+                f"Audio file is too large ({compressed_size_mb:.1f} MB) even after compression. "
+                "Please trim the audio to a shorter segment."
+            )
+        file_to_transcribe = compressed_file
+
+    max_attempts = 3
+    last_error = None
+
+    try:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with open(file_to_transcribe, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="verbose_json",
+                        language="en",
+                        prompt="Transcribe the audio accurately, including all spoken words and sung lyrics."
+                    )
+
+                transcribed_text = transcript.text
+
+                print(f"\n(openai) -> Transcription Info:")
+                print(f"  - Language detected: {transcript.language}")
+                print(f"  - Duration: {transcript.duration}s")
+                print(f"  - Text length: {len(transcribed_text)} characters")
+
+                if transcribed_text.count('♪') > len(transcribed_text) * 0.5:
+                    print("⚠️ Warning: Mostly instrumental audio detected. Limited vocals found.")
+
+                return transcribed_text
+
+            except openai.RateLimitError as e:
+                last_error = e
+                wait = 2 ** attempt
+                print(f"⚠️ Rate limit hit (attempt {attempt}/{max_attempts}). Retrying in {wait}s...")
+                time.sleep(wait)
+            except (openai.APIConnectionError, openai.APITimeoutError) as e:
+                last_error = e
+                wait = 2 ** attempt
+                print(f"⚠️ Connection error (attempt {attempt}/{max_attempts}): {e}. Retrying in {wait}s...")
+                time.sleep(wait)
+            except openai.APIStatusError as e:
+                # 5xx are transient; 4xx (other than 429) are not worth retrying
+                if e.status_code >= 500:
+                    last_error = e
+                    wait = 2 ** attempt
+                    print(f"⚠️ Server error {e.status_code} (attempt {attempt}/{max_attempts}). Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+    finally:
+        if compressed_file and Path(compressed_file).exists():
+            Path(compressed_file).unlink(missing_ok=True)
+
+    raise RuntimeError(
+        f"Whisper transcription failed after {max_attempts} attempts. Last error: {last_error}"
+    )
 
 
-def analyze_lyrics_with_claude(transcribed_text: str, audio_file_path: str):
-    """Analyze transcribed lyrics with Claude"""
-    
+def analyze_with_claude(transcribed_text: str, audio_file_path: str):
+    """Analyze transcribed audio with Claude — handles both songs and spoken content."""
+
     bedrock_opus_model = BedrockModel(model_id="us.anthropic.claude-opus-4-6-v1")
-    
+
     agent = Agent(
         model=bedrock_opus_model,
         tools=[
             format_lyrics,
-            analyze_lyrics_structure
+            analyze_lyrics_structure,
+            format_text,
         ],
         description="""
-You are an expert lyrics analysis assistant.
-Your role is to analyze transcribed lyrics and provide detailed insights.
+You are an expert audio transcription analyst.
 
-When given transcribed lyrics:
-1. Format the lyrics properly with line breaks
-2. Identify the song structure (verses, chorus, bridge, etc.)
-3. Analyze patterns, themes, and meaning
-4. Provide insights about the song's message
+**Step 1 — Classify the content.**
+Read the transcribed text carefully and decide whether it is:
+  - A SONG: contains sung lyrics, repeating lines, verses/chorus patterns, or music symbols (♪).
+  - SPOKEN: a speech, interview, podcast, lecture, or other plain spoken-word content.
 
-If the transcription contains mostly music symbols (♪), note that the audio
-was primarily instrumental with limited vocals.
+**Step 2 — Process accordingly.**
+- If SONG:
+    1. Call `format_lyrics` to format the lyrics with proper line breaks.
+    2. Call `analyze_lyrics_structure` to identify verses, chorus, bridge, etc.
+    3. Share insights about patterns, themes, and the song's meaning.
+    4. If mostly instrumental (♪ symbols), note the limited vocal content.
+- If SPOKEN:
+    1. Call `format_text` to clean up and paragraph the spoken text.
+    2. Summarise the key points, topics, and overall message of the content.
 
-Always be thorough and accurate in your analysis.
+Always state your classification decision before using any tool.
 """
     )
-    
-    prompt = f"""
-Here are the transcribed lyrics from the audio file: {audio_file_path}
 
-LYRICS:
+    prompt = f"""
+Transcribed audio from: {audio_file_path}
+
+TRANSCRIPTION:
 {transcribed_text}
 
-Please:
-1. Format these lyrics with proper line breaks and structure
-2. Analyze the song structure (identify verses, chorus, bridge, etc.)
-3. Identify any notable patterns, themes, or wordplay
-4. Provide insights about the song's message and meaning
-5. If mostly instrumental (♪ symbols), note the limited vocal content
+Follow the two-step process described in your instructions:
+1. Classify whether this is a SONG or SPOKEN content.
+2. Use the appropriate tool(s) and provide a thorough analysis.
 """
-    
+
     response = agent(prompt)
     return response
 
@@ -121,12 +188,16 @@ def transcribe_mp3_lyrics(mp3_file_path: str):
     # Step 2: Transcribe with Whisper
     print("🎤 Transcribing audio with OpenAI Whisper...")
     print("   (Whisper processes the entire audio file in one API call)")
-    transcribed_text = transcribe_audio_with_whisper(mp3_file_path)
+    try:
+        transcribed_text = transcribe_audio_with_whisper(mp3_file_path)
+    except Exception as e:
+        print(f"\n❌ Transcription failed: {e}")
+        return None
     print(f"\n✅ Transcription complete! ({len(transcribed_text)} characters)\n")
     
     # Step 3: Analyze with Claude
-    print("🧠 Analyzing lyrics with Claude...")
-    analysis = analyze_lyrics_with_claude(transcribed_text, mp3_file_path)
+    print("🧠 Analyzing audio content with Claude...")
+    analysis = analyze_with_claude(transcribed_text, mp3_file_path)
     
     print("\n" + "=" * 80)
     print("TRANSCRIPTION & ANALYSIS RESULTS:")
@@ -135,7 +206,7 @@ def transcribe_mp3_lyrics(mp3_file_path: str):
     print("-" * 80)
     print(transcribed_text)
     print("\n" + "-" * 80)
-    print("\n🎵 ANALYSIS:")
+    print("\n🔍 ANALYSIS:")
     print("-" * 80)
     print(analysis)
     print("\n" + "=" * 80)
@@ -207,3 +278,5 @@ if __name__ == "__main__":
     
     # Transcribe and analyze
     results = transcribe_mp3_lyrics(mp3_file_path=mp3_file)
+    if results is None:
+        exit(1)

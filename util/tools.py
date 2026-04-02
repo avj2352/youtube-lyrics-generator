@@ -90,6 +90,37 @@ def format_lyrics(raw_lyrics: str) -> str:
 
 
 @tool
+def format_text(raw_text: str) -> str:
+    """
+    Format and clean up transcribed plain spoken text (non-song content such as
+    speeches, interviews, podcasts, or lectures).
+
+    Args:
+        raw_text: The raw transcribed spoken text
+
+    Returns:
+        Formatted text with proper paragraph breaks and cleaned-up punctuation
+    """
+    import re
+
+    # Normalise whitespace
+    text = re.sub(r' +', ' ', raw_text).strip()
+
+    # Split into sentences and group into paragraphs (~3-4 sentences each)
+    sentence_endings = re.compile(r'(?<=[.!?])\s+')
+    sentences = sentence_endings.split(text)
+
+    paragraphs = []
+    group_size = 3
+    for i in range(0, len(sentences), group_size):
+        paragraph = ' '.join(sentences[i:i + group_size]).strip()
+        if paragraph:
+            paragraphs.append(paragraph)
+
+    return '\n\n'.join(paragraphs)
+
+
+@tool
 def analyze_lyrics_structure(lyrics: str) -> str:
     """
     Analyze the structure of song lyrics (verses, chorus, bridge, etc.).
